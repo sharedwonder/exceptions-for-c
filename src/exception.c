@@ -5,7 +5,7 @@
 
 #include "exception.h"
 
-static ExceptionContext* exceptionContextStack = NULL;
+ExceptionContext* exceptionContextStack = NULL;
 
 DEFINE_EXCEPTION(Exception, 0xFFFFFFFFFFFFFFFF, NULL);
 
@@ -19,17 +19,13 @@ ExceptionInstance exceptionNew(const ExceptionType type, const char* message) {
 
 void exceptionContextStackPush(ExceptionContext* exceptionContext) {
     exceptionContext->exception = NULL;
-    exceptionContext->inFinally = false;
+    exceptionContext->finally = false;
     exceptionContext->link = exceptionContextStack;
     exceptionContextStack = exceptionContext;
 }
 
 void exceptionContextStackPopup() {
     exceptionContextStack = exceptionContextStack->link;
-}
-
-bool exceptionContextStackIsEmpty() {
-    return exceptionContextStack == NULL;
 }
 
 bool exceptionInstanceOf(ExceptionInstance* exception, ExceptionType type) {
@@ -48,11 +44,11 @@ bool exceptionInstanceOf(ExceptionInstance* exception, ExceptionType type) {
 }
 
 void exceptionThrow(ExceptionInstance exception) {
-    if (exceptionContextStackIsEmpty()) {
+    if (exceptionContextStack == NULL) {
         fprintf(stderr, "Terminate cause by the exception [%s]: %s\n", exception.type.name, exception.message);
         abort();
     } else {
         exceptionContextStack->exception = &exception;
-        longjmp(exceptionContextStack->snapshot, TryBlockExceptionOccurred);
+        longjmp(exceptionContextStack->snapshot, exceptionContextStack->status == TryBlockInProgress ? TryBlockExceptionOccurred : TryBlockUncaughtException);
     }
 }

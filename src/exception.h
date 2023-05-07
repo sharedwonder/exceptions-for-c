@@ -22,19 +22,20 @@ typedef struct ExceptionInstance {
 } ExceptionInstance;
 
 typedef enum TryBlockStatus {
-    TryBlockInto,
+    TryBlockEnter,
+    TryBlockInProgress,
     TryBlockNoException,
     TryBlockExceptionOccurred,
-    TryBlockExceptionCapture,
-    TryBlockInterrupted,
-    TryBlockFunctionReturn
+    TryBlockUncaughtException,
+    TryBlockCaughtException,
+    TryBlockInterrupted
 } TryBlockStatus;
 
 typedef struct ExceptionContext {
-    ExceptionInstance* exception;
-    jmp_buf snapshot;
-    bool inFinally;
     TryBlockStatus status;
+    jmp_buf snapshot;
+    ExceptionInstance* exception;
+    bool finally;
     struct ExceptionContext* link;
 } ExceptionContext;
 
@@ -42,11 +43,11 @@ typedef struct ExceptionContext {
 extern "C" {
 #endif
 
+extern ExceptionContext* exceptionContextStack;
+
 void exceptionContextStackPush(ExceptionContext* exceptionContext);
 
 void exceptionContextStackPopup();
-
-bool exceptionContextStackIsEmpty();
 
 ExceptionInstance exceptionNew(ExceptionType type, const char* message);
 
@@ -63,31 +64,34 @@ void exceptionThrow(ExceptionInstance exception);
         ExceptionContext _CONTEXT; \
         exceptionContextStackPush(&_CONTEXT); \
         _CONTEXT.status = setjmp(_CONTEXT.snapshot); \
-        if (_CONTEXT.status == TryBlockInto) { \
-            _CONTEXT.status = TryBlockNoException;
+        if (_CONTEXT.status == TryBlockEnter) { \
+            _CONTEXT.status = TryBlockInProgress;
 
 #define CATCH(exceptionType, variable) \
-        } else if (_CONTEXT.status == TryBlockExceptionOccurred && exceptionInstanceOf(_CONTEXT.exception, (exceptionType))) { \
+        } \
+        if (_CONTEXT.status == TryBlockInProgress) _CONTEXT.status = TryBlockNoException; \
+        else if (_CONTEXT.status == TryBlockExceptionOccurred && exceptionInstanceOf(_CONTEXT.exception, (exceptionType))) { \
             ExceptionInstance* (variable) = _CONTEXT.exception; \
-            _CONTEXT.status = TryBlockExceptionCapture;
+            _CONTEXT.status = TryBlockCaughtException;
 
 #define PASSED \
         } \
-        _CONTEXT.inFinally = false; \
+        if (_CONTEXT.status == TryBlockInProgress) _CONTEXT.status = TryBlockNoException; \
         if (_CONTEXT.status == TryBlockNoException) {
 
 #define FINALLY \
         } \
-        _CONTEXT.inFinally = true; \
-        {
+        if (_CONTEXT.status == TryBlockInProgress) _CONTEXT.status = TryBlockNoException; \
+        if (!_CONTEXT.finally) { \
+            _CONTEXT.finally = true; \
 
 #define END_TRY \
         } \
             exceptionContextStackPopup(); \
             if (_CONTEXT.status == TryBlockInterrupted) { \
-                longjmp(_CONTEXT.snapshot, TryBlockFunctionReturn); \
+                longjmp(_CONTEXT.snapshot, -1); \
             } \
-            if (_CONTEXT.status == TryBlockExceptionOccurred) { \
+            if (_CONTEXT.status == TryBlockExceptionOccurred || _CONTEXT.status == TryBlockUncaughtException) { \
                 exceptionThrow(*_CONTEXT.exception); \
             } \
     } \
@@ -95,13 +99,13 @@ void exceptionThrow(ExceptionInstance exception);
 
 #define RETURN_IN_TRY(value) \
     { \
-        if (_CONTEXT.inFinally) { \
+        if (_CONTEXT.finally) { \
             exceptionContextStackPopup(); \
             return value; \
         } \
-        Snapshot snapshot; \
-        memcpy(snapshot, _CONTEXT.snapshot, sizeof(Snapshot)); \
-        if (setjmp(_CONTEXT.snapshot) == TryBlockFunctionReturn) { \
+        jmp_buf snapshot; \
+        memcpy(snapshot, _CONTEXT.snapshot, sizeof(jmp_buf)); \
+        if (setjmp(_CONTEXT.snapshot) == -1) { \
             return value; \
         } else { \
             longjmp(snapshot, TryBlockInterrupted); \
@@ -115,7 +119,7 @@ void exceptionThrow(ExceptionInstance exception);
 
 #define NEW_EXCEPTION exceptionNew
 
-#define PRINT_EXCEPTION_INFO(exception) fprintf(stderr, "Exception occured [%s]: %s", exception->type.name, exception->message);
+#define PRINT_EXCEPTION_INFO(exception) fprintf(stderr, "Exception occured [%s]: %s\n", exception->type.name, exception->message);
 
 #define EXCEPTION_INSTANCE_OF exceptionInstanceOf
 
