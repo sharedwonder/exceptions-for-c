@@ -59,7 +59,7 @@ This repository provides an implementation for exceptions in the C language.
 
 #### ExceptionType
 
-Structure of all exception types.
+- Structure of all exception types.
 
 | Identifier | Type | Description |
 | - | - | - |
@@ -69,7 +69,7 @@ Structure of all exception types.
 
 #### ExceptionInstance
 
-The exception instance type.
+- The exception instance type.
 
 | Identifier | Type | Description |
 | - | - | - |
@@ -78,7 +78,7 @@ The exception instance type.
 
 #### ExceptionContext
 
-The exception context type.
+- The exception context type.
 
 | Identifier | Type | Description |
 | - | - | - |
