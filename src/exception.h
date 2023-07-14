@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2022 Liu Baihao. All rights reserved.
+ * Copyright (C) 2023 Liu Baihao (sharedwonder). All rights reserved.
  * This source code is licensed under the MIT License.
  */
 
@@ -9,55 +9,6 @@
 #include <stdio.h>
 #include <setjmp.h>
 #include <memory.h>
-
-typedef struct ExceptionType {
-    const char* name;
-    uint64_t code;
-    struct ExceptionType* parent;
-} ExceptionType;
-
-typedef struct ExceptionInstance {
-    ExceptionType type;
-    const char* message;
-} ExceptionInstance;
-
-typedef enum TryBlockStatus {
-    TryBlockEnter,
-    TryBlockInProgress,
-    TryBlockNoException,
-    TryBlockExceptionOccurred,
-    TryBlockUncaughtException,
-    TryBlockCaughtException,
-    TryBlockInterrupted
-} TryBlockStatus;
-
-typedef struct ExceptionContext {
-    TryBlockStatus status;
-    jmp_buf snapshot;
-    ExceptionInstance* exception;
-    bool finally;
-    struct ExceptionContext* link;
-} ExceptionContext;
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-extern ExceptionContext* exceptionContextStack;
-
-void exceptionContextStackPush(ExceptionContext* exceptionContext);
-
-void exceptionContextStackPopup();
-
-ExceptionInstance exceptionNew(ExceptionType type, const char* message);
-
-bool exceptionInstanceOf(ExceptionInstance* exception, ExceptionType type);
-
-void exceptionThrow(ExceptionInstance exception);
-
-#ifdef __cplusplus
-}
-#endif
 
 #define TRY \
     { \
@@ -71,7 +22,7 @@ void exceptionThrow(ExceptionInstance exception);
         } \
         if (_CONTEXT.status == TryBlockInProgress) _CONTEXT.status = TryBlockNoException; \
         else if (_CONTEXT.status == TryBlockExceptionOccurred && exceptionInstanceOf(_CONTEXT.exception, (exceptionType))) { \
-            ExceptionInstance* (variable) = _CONTEXT.exception; \
+            const ExceptionInstance* (variable) = _CONTEXT.exception; \
             _CONTEXT.status = TryBlockCaughtException;
 
 #define PASSED \
@@ -89,10 +40,10 @@ void exceptionThrow(ExceptionInstance exception);
         } \
             exceptionContextStackPopup(); \
             if (_CONTEXT.status == TryBlockInterrupted) { \
-                longjmp(_CONTEXT.snapshot, -1); \
+                longjmp(_CONTEXT.snapshot, TryBlockToReturn); \
             } \
-            if (_CONTEXT.status == TryBlockExceptionOccurred || _CONTEXT.status == TryBlockUncaughtException) { \
-                exceptionThrow(*_CONTEXT.exception); \
+            if (_CONTEXT.status == TryBlockExceptionOccurred || _CONTEXT.status == TryBlockExceptionOutflow) { \
+                throwException(*_CONTEXT.exception); \
             } \
     } \
     (void) 0
@@ -105,21 +56,20 @@ void exceptionThrow(ExceptionInstance exception);
         } \
         jmp_buf snapshot; \
         memcpy(snapshot, _CONTEXT.snapshot, sizeof(jmp_buf)); \
-        if (setjmp(_CONTEXT.snapshot) == -1) { \
+        if (setjmp(_CONTEXT.snapshot) == TryBlockToReturn) { \
             return value; \
-        } else { \
-            longjmp(snapshot, TryBlockInterrupted); \
         } \
+        longjmp(snapshot, TryBlockInterrupted); \
     } \
     (void) 0
 
-#define THROW_NEW(type, message) exceptionThrow(exceptionNew(type, message))
+#define THROW_NEW(type, message) throwException(newException((type), (message)))
 
-#define THROW exceptionThrow
+#define THROW throwException
 
-#define NEW_EXCEPTION exceptionNew
+#define NEW_EXCEPTION newException
 
-#define PRINT_EXCEPTION_INFO(exception) fprintf(stderr, "Exception occured [%s]: %s\n", exception->type.name, exception->message);
+#define PRINT_EXCEPTION_INFO(exception) fprintf(stderr, "Exception occured [%s]: %s\n", (exception)->type.name, (exception)->message);
 
 #define EXCEPTION_INSTANCE_OF exceptionInstanceOf
 
@@ -127,10 +77,80 @@ void exceptionThrow(ExceptionInstance exception);
     extern const ExceptionType name;
 
 #define DEFINE_EXCEPTION(_name, _code, _parent) \
-    const ExceptionType _name = { \
-        .name = #_name, \
-        .code = _code, \
-        .parent = _parent \
-    }
+    const ExceptionType _name = {#_name, (_code), &(_parent)}
 
-DECLARE_EXCEPTION(Exception)
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#ifdef _EXCEPTION_FOR_C_SHARED_LIBRARY
+    #ifdef _WIN32
+        #ifdef _EXCEPTION_FOR_C_BUILDING
+            #define _EXCEPTION_FOR_C_API __declspec(dllexport)
+        #else
+            #define _EXCEPTION_FOR_C_API __declspec(dllimport)
+        #endif
+    #elif defined(__GNUC__)
+        #define _EXCEPTION_FOR_C_API __attribute__((visibility("default")))
+    #else
+        #define _EXCEPTION_FOR_C_API
+    #endif
+#else
+    #define _EXCEPTION_FOR_C_API
+#endif
+
+typedef struct ExceptionType {
+    const char* const name;
+    const uint64_t code;
+    const struct ExceptionType* const parent;
+} ExceptionType;
+
+typedef struct ExceptionInstance {
+    const ExceptionType type;
+    const char* const message;
+} ExceptionInstance;
+
+typedef enum TryBlockStatus {
+    TryBlockEnter,
+    TryBlockInProgress,
+    TryBlockNoException,
+    TryBlockExceptionOccurred,
+    TryBlockCaughtException,
+    TryBlockExceptionOutflow,
+    TryBlockInterrupted,
+    TryBlockToReturn
+} TryBlockStatus;
+
+typedef struct ExceptionContext {
+    TryBlockStatus status;
+    jmp_buf snapshot;
+    const ExceptionInstance* exception;
+    bool finally;
+    struct ExceptionContext* link;
+} ExceptionContext;
+
+typedef void (*UncaughtExceptionHandler)(ExceptionInstance);
+
+_EXCEPTION_FOR_C_API extern UncaughtExceptionHandler uncaughtExceptionHandler;
+
+_EXCEPTION_FOR_C_API extern ExceptionContext* exceptionContextStack;
+
+_EXCEPTION_FOR_C_API DECLARE_EXCEPTION(Exception)
+
+_EXCEPTION_FOR_C_API void throwException(const ExceptionInstance exception);
+
+_EXCEPTION_FOR_C_API ExceptionInstance newException(ExceptionType type, const char* message);
+
+_EXCEPTION_FOR_C_API bool exceptionInstanceOf(const ExceptionInstance* exception, ExceptionType type);
+
+_EXCEPTION_FOR_C_API void exceptionContextStackPush(ExceptionContext* exceptionContext);
+
+_EXCEPTION_FOR_C_API void exceptionContextStackPopup();
+
+_EXCEPTION_FOR_C_API void exceptionTerminate(ExceptionInstance exception);
+
+#undef _EXCEPTION_FOR_C_API
+
+#ifdef __cplusplus
+}
+#endif
